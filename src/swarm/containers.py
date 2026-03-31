@@ -143,9 +143,21 @@ ENTRYPOINT_SCRIPT = textwrap.dedent("""\
 
         LOGFILE="agent_logs/${AGENT_ID}_session_${SESSION}_$(date +%s).log"
 
+        # Use per-agent prompt if available, else fall back to shared prompt
+        PROMPT_FILE="SWARM_AGENT_PROMPT_${AGENT_ID}.md"
+        if [ ! -f "$PROMPT_FILE" ]; then
+            PROMPT_FILE="SWARM_AGENT_PROMPT.md"
+        fi
+
+        if [ ! -f "$PROMPT_FILE" ]; then
+            echo "[agent-${AGENT_ID}] ERROR: No prompt file found"
+            sleep 10
+            continue
+        fi
+
         # Run Claude Code with the agent prompt
         claude --dangerously-skip-permissions \
-               -p "$(cat SWARM_AGENT_PROMPT.md)" \
+               -p "$(cat "$PROMPT_FILE")" \
                --model "$MODEL" \
                --max-turns 50 \
                &> "$LOGFILE" || true
@@ -284,9 +296,12 @@ def spawn_agent(spec: ContainerSpec) -> str:
     }
 
     if auth_mode == "oauth":
-        # Mount host ~/.claude/ into container's home as read-only
+        # Mount host ~/.claude/ and ~/.claude.json into container's home as read-only
         claude_dir = str(Path.home() / ".claude")
         volumes[claude_dir] = {"bind": "/home/swarm-agent/.claude", "mode": "ro"}
+        claude_json = Path.home() / ".claude.json"
+        if claude_json.is_file():
+            volumes[str(claude_json)] = {"bind": "/home/swarm-agent/.claude.json", "mode": "ro"}
         log.info("Agent %s: using OAuth session (Pro/Max plan)", spec.agent_id)
     else:
         # Mount API key as secret file

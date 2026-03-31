@@ -134,6 +134,7 @@ def run(
     from swarm.config import load_config
     from swarm.containers import ContainerSpec, build_image, spawn_agent, write_docker_assets
     from swarm.git_sync import create_bare_repo, push_to_upstream
+    from swarm.prompt import generate_prompt
     from swarm.roles import assign_roles
 
     cfg = load_config(Path.cwd(), config)
@@ -159,10 +160,63 @@ def run(
         create_bare_repo(upstream)
         push_to_upstream(project_dir, upstream, cfg.git.branch)
 
-    # 3. Assign roles
+    # 3. Assign roles and write prompt files into upstream
     roles = assign_roles(cfg.agents.count, cfg.agents.roles)
     for role in roles:
         console.print(f"  Agent {role.agent_id}: [cyan]{role.role.value}[/cyan]")
+
+    if not dry_run:
+        import tempfile
+
+        # Clone upstream, write per-agent prompts, push back
+        tmp_clone = Path(tempfile.mkdtemp(prefix="swarm-prompts-"))
+        subprocess.run(
+            ["git", "clone", "--branch", cfg.git.branch, str(upstream), str(tmp_clone)],
+            capture_output=True, check=True,
+        )
+        subprocess.run(["git", "config", "user.name", "swarm"], cwd=tmp_clone, capture_output=True, check=True)
+        subprocess.run(["git", "config", "user.email", "swarm@local"], cwd=tmp_clone, capture_output=True, check=True)
+
+        # Write a shared prompt (agents share the same prompt file, role is embedded)
+        # Each agent gets their own prompt, but we write a generic builder prompt as default
+        for role in roles:
+            prompt_content = generate_prompt(
+                agent=role,
+                summary=summary,
+                project_name=cfg.project.name,
+                branch=cfg.git.branch,
+                task_source=cfg.tasks.source,
+                lock_dir=cfg.tasks.lock_dir,
+                test_command=cfg.tests.command,
+                fast_command=cfg.tests.fast_command,
+            )
+            # Write per-agent prompt: SWARM_AGENT_PROMPT_{id}.md
+            (tmp_clone / f"SWARM_AGENT_PROMPT_{role.agent_id}.md").write_text(prompt_content)
+
+        # Also write a default SWARM_AGENT_PROMPT.md (used by entrypoint)
+        # Use the first role's prompt as default
+        default_prompt = generate_prompt(
+            agent=roles[0],
+            summary=summary,
+            project_name=cfg.project.name,
+            branch=cfg.git.branch,
+            task_source=cfg.tasks.source,
+            lock_dir=cfg.tasks.lock_dir,
+            test_command=cfg.tests.command,
+            fast_command=cfg.tests.fast_command,
+        )
+        (tmp_clone / "SWARM_AGENT_PROMPT.md").write_text(default_prompt)
+
+        subprocess.run(["git", "add", "-A"], cwd=tmp_clone, capture_output=True, check=True)
+        subprocess.run(
+            ["git", "commit", "-m", "swarm: add agent prompts"],
+            cwd=tmp_clone, capture_output=True, check=True,
+        )
+        subprocess.run(
+            ["git", "push", "origin", cfg.git.branch],
+            cwd=tmp_clone, capture_output=True, check=True,
+        )
+        console.print("  [green]Agent prompts written to upstream[/green]")
 
     # 4. Build Docker image
     console.print(f"  Building Docker image for {summary.language}...")
@@ -173,7 +227,7 @@ def run(
     else:
         image_tag = f"swarm-agent:{cfg.project.name}"
 
-    # 5. Generate prompts and spawn agents
+    # 5. Spawn agents
     for role in roles:
         if dry_run:
             console.print(f"  [dim]Would spawn agent {role.agent_id} ({role.role.value})[/dim]")
