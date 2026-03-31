@@ -111,9 +111,15 @@ ENTRYPOINT_SCRIPT = textwrap.dedent("""\
     MODEL="${MODEL:-claude-opus-4-6}"
     WORKSPACE="/workspace"
 
-    # Read API key from mounted secret file
-    if [ -f /run/secrets/api_key ]; then
+    # Auth: prefer OAuth session (~/.claude), fall back to API key file
+    if [ -d /home/swarm-agent/.claude ] && [ -f /home/swarm-agent/.claude/.credentials.json ]; then
+        echo "[agent-${AGENT_ID}] Using OAuth session (Pro/Max plan)"
+    elif [ -f /run/secrets/api_key ]; then
         export ANTHROPIC_API_KEY="$(cat /run/secrets/api_key)"
+        echo "[agent-${AGENT_ID}] Using API key"
+    else
+        echo "[agent-${AGENT_ID}] ERROR: No auth found. Mount ~/.claude/ or provide ANTHROPIC_API_KEY"
+        exit 1
     fi
 
     # Clone from upstream if workspace is empty
@@ -174,6 +180,7 @@ class ContainerSpec:
     api_key_env: str = "ANTHROPIC_API_KEY"
     memory_limit: str = "4g"
     cpu_limit: float = 2.0
+    auth_mode: str = "auto"  # "auto", "oauth", or "api_key"
 
 
 def generate_dockerfile(language: str) -> str:
@@ -229,17 +236,34 @@ def _write_secret_file(api_key: str) -> Path:
     return key_file
 
 
+def _detect_auth_mode(spec: ContainerSpec) -> str:
+    """Detect auth mode: check for OAuth session or API key."""
+    if spec.auth_mode == "oauth":
+        return "oauth"
+    if spec.auth_mode == "api_key":
+        return "api_key"
+
+    # auto: prefer OAuth session, fall back to API key
+    claude_dir = Path.home() / ".claude"
+    if (claude_dir / ".credentials.json").is_file():
+        return "oauth"
+
+    if os.environ.get(spec.api_key_env):
+        return "api_key"
+
+    raise RuntimeError(
+        "No authentication found. Either:\n"
+        "  1. Log in with 'claude login' (uses your Pro/Max plan), or\n"
+        f"  2. Set {spec.api_key_env} environment variable"
+    )
+
+
 def spawn_agent(spec: ContainerSpec) -> str:
     """Start a container for an agent. Returns the container ID."""
     import docker as docker_sdk
 
     client = docker_sdk.from_env()
-    api_key = os.environ.get(spec.api_key_env, "")
-    if not api_key:
-        raise RuntimeError(
-            f"Environment variable {spec.api_key_env} is not set. "
-            "Set it to your Anthropic API key."
-        )
+    auth_mode = _detect_auth_mode(spec)
 
     container_name = f"swarm-agent-{spec.agent_id}"
 
@@ -253,8 +277,24 @@ def spawn_agent(spec: ContainerSpec) -> str:
     except docker_sdk.errors.APIError as e:
         log.error("Failed to remove container %s: %s", container_name, e)
 
-    # Mount API key as a read-only secret file instead of env var
-    secret_file = _write_secret_file(api_key)
+    # Build volumes map
+    volumes: dict[str, dict[str, str]] = {
+        spec.upstream_path: {"bind": "/upstream", "mode": "rw"},
+    }
+
+    if auth_mode == "oauth":
+        # Mount host ~/.claude/ into container's home as read-only
+        claude_dir = str(Path.home() / ".claude")
+        volumes[claude_dir] = {"bind": "/home/swarm-agent/.claude", "mode": "ro"}
+        log.info("Agent %s: using OAuth session (Pro/Max plan)", spec.agent_id)
+    else:
+        # Mount API key as secret file
+        api_key = os.environ.get(spec.api_key_env, "")
+        if not api_key:
+            raise RuntimeError(f"Environment variable {spec.api_key_env} is not set.")
+        secret_file = _write_secret_file(api_key)
+        volumes[str(secret_file)] = {"bind": "/run/secrets/api_key", "mode": "ro"}
+        log.info("Agent %s: using API key", spec.agent_id)
 
     container = client.containers.run(
         spec.image_name,
@@ -268,10 +308,7 @@ def spawn_agent(spec: ContainerSpec) -> str:
             "BRANCH": spec.branch,
             "UPSTREAM_PATH": "/upstream",
         },
-        volumes={
-            spec.upstream_path: {"bind": "/upstream", "mode": "rw"},
-            str(secret_file): {"bind": "/run/secrets/api_key", "mode": "ro"},
-        },
+        volumes=volumes,
         mem_limit=spec.memory_limit,
         nano_cpus=int(spec.cpu_limit * 1e9),
         security_opt=["no-new-privileges:true"],
@@ -280,8 +317,8 @@ def spawn_agent(spec: ContainerSpec) -> str:
 
     container_id: str = container.id  # type: ignore[union-attr]
     log.info(
-        "Spawned agent %s (role=%s) as container %s",
-        spec.agent_id, spec.role, container.short_id,
+        "Spawned agent %s (role=%s, auth=%s) as container %s",
+        spec.agent_id, spec.role, auth_mode, container.short_id,
     )
     return container_id
 
