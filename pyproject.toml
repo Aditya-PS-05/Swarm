@@ -3,7 +3,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "swarm"
+name = "swarm-ai"
 version = "0.1.0"
 description = "Point it at any repo. It spawns parallel Claude agents that build your project autonomously."
 readme = "README.md"
@@ -12,7 +12,7 @@ requires-python = ">=3.11"
 authors = [
     { name = "Swarm Contributors" },
 ]
-keywords = ["ai", "agents", "parallel", "claude", "automation"]
+keywords = ["ai", "agents", "parallel", "claude", "automation", "swarm", "llm"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",

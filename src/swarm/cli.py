@@ -14,7 +14,7 @@ from swarm import __version__
 
 app = typer.Typer(
     name="swarm",
-    help="Point it at any repo. It spawns parallel Claude agents that build your project autonomously.",
+    help="Swarm AI — Point it at any repo. It spawns parallel Claude agents that build your project autonomously.",
     no_args_is_help=True,
 )
 console = Console()
@@ -396,7 +396,7 @@ def history(
 @app.command()
 def version() -> None:
     """Show swarm version."""
-    console.print(f"swarm {__version__}")
+    console.print(f"swarm-ai {__version__}")
 
 
 def main() -> None:
