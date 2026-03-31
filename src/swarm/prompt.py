@@ -59,12 +59,26 @@ Keep your context window clean — long outputs waste tokens and confuse you.
 """
 
 _PROGRESS_TRACKING = """\
-## Progress Tracking
+## Progress Tracking & Communication
 
-1. Update `PROGRESS.md` with what you've accomplished each session
-2. Note failed approaches so other agents don't repeat them
-3. If you change architecture, update README
-4. Format: `## Agent {agent_id} — Session <N>\\n- Did X\\n- Tried Y, failed because Z`
+Agents communicate ONLY through shared files in git. Read these before starting work.
+
+### PROGRESS.md — What's been done
+1. **Read first** to see what other agents have accomplished
+2. **Write** at the end of each session: what you did, what changed
+3. Format: `## Agent {agent_id} — Session <N>\\n- Did X\\n- Fixed Y`
+
+### FAILED_APPROACHES.md — What didn't work
+1. **Read first** to avoid repeating failed approaches
+2. **Write** when an approach fails: what you tried, why it failed
+3. Format: `## Agent {agent_id} — <task>\\n**Approach:** ...\\n**Why it failed:** ...`
+
+### DECISIONS.md — Architecture decisions
+1. **Read first** and follow existing decisions
+2. **Write** when you make an architectural choice that affects other agents
+3. Format: `## <Title>\\n**Context:** ...\\n**Decision:** ...`
+
+If you change architecture, update both DECISIONS.md and README.
 """
 
 

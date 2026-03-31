@@ -221,9 +221,14 @@ def run(
         )
         (tmp_clone / "SWARM_AGENT_PROMPT.md").write_text(default_prompt)
 
+        # Initialize communication files
+        (tmp_clone / "PROGRESS.md").write_text("# Progress Log\n\n")
+        (tmp_clone / "FAILED_APPROACHES.md").write_text("# Failed Approaches\n\n")
+        (tmp_clone / "DECISIONS.md").write_text("# Architectural Decisions\n\n")
+
         subprocess.run(["git", "add", "-A"], cwd=tmp_clone, capture_output=True, check=True)
         subprocess.run(
-            ["git", "commit", "-m", "swarm: add agent prompts"],
+            ["git", "commit", "-m", "swarm: add agent prompts and communication files"],
             cwd=tmp_clone, capture_output=True, check=True,
         )
         subprocess.run(
