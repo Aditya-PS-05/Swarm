@@ -465,6 +465,26 @@ def history(
     console.print(result.stdout)
 
 
+# ── swarm dashboard ─────────────────────────────────────────────────────────
+
+
+@app.command()
+def dashboard(
+    config: Optional[Path] = typer.Option(None, "--config", "-c", help="Config file path"),
+) -> None:
+    """Launch live TUI dashboard."""
+    from swarm.config import load_config
+    from swarm.dashboard import run_dashboard
+
+    cfg = load_config(Path.cwd(), config)
+    upstream = Path(cfg.git.upstream)
+    if not upstream.is_absolute():
+        upstream = (Path.cwd() / upstream).resolve()
+    lock_dir = Path.cwd() / cfg.tasks.lock_dir
+
+    run_dashboard(cfg, upstream, lock_dir)
+
+
 # ── swarm version ───────────────────────────────────────────────────────────
 
 
