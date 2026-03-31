@@ -7,6 +7,7 @@ Git is the single synchronization layer between agents.
 from __future__ import annotations
 
 import logging
+import shlex
 import subprocess
 from pathlib import Path
 
@@ -163,9 +164,13 @@ def sync_status(workspace: Path, branch: str = "main") -> dict[str, int]:
 def run_test_gate(workspace: Path, test_command: str) -> bool:
     """Run tests before allowing a push. Returns True if tests pass."""
     log.info("Running test gate: %s", test_command)
+    try:
+        cmd_parts = shlex.split(test_command)
+    except ValueError as e:
+        log.error("Invalid test command %r: %s", test_command, e)
+        return False
     result = subprocess.run(
-        test_command,
-        shell=True,
+        cmd_parts,
         cwd=workspace,
         capture_output=True,
         text=True,

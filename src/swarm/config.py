@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -36,7 +37,7 @@ class AgentsConfig:
 
 @dataclass
 class GitConfig:
-    upstream: str = "/tmp/swarm-upstream.git"
+    upstream: str = ".swarm/upstream.git"
     branch: str = "main"
     auto_resolve_conflicts: bool = True
 
@@ -181,6 +182,23 @@ def validate_config(cfg: SwarmConfig, project_dir: Path) -> None:
             f"Total role slots ({total_roles}) exceed agent count ({cfg.agents.count}). "
             "Reduce role counts or increase agents.count."
         )
+
+    # Validate string fields against injection
+    if not re.match(r"^[a-zA-Z0-9._/-]+$", cfg.git.branch):
+        raise ConfigError(f"Invalid branch name: {cfg.git.branch!r}")
+
+    if not re.match(r"^[a-zA-Z0-9._-]+$", cfg.agents.model):
+        raise ConfigError(f"Invalid model name: {cfg.agents.model!r}")
+
+    dangerous_chars = set(";|&$`")
+    for cmd_name, cmd_val in [
+        ("tests.command", cfg.tests.command),
+        ("tests.fast_command", cfg.tests.fast_command),
+    ]:
+        if dangerous_chars & set(cmd_val):
+            raise ConfigError(
+                f"{cmd_name} contains dangerous shell characters: {cmd_val!r}"
+            )
 
     project_path = Path(cfg.project.path)
     if not project_path.is_absolute():

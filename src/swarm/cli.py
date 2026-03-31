@@ -68,7 +68,7 @@ tester = 1
 reviewer = 1
 
 [git]
-upstream = "/tmp/swarm-upstream-{project_dir.name}.git"
+upstream = ".swarm/upstream.git"
 branch = "main"
 auto_resolve_conflicts = true
 

@@ -9,6 +9,9 @@ Each agent runs in its own Docker container with:
 from __future__ import annotations
 
 import logging
+import os
+import stat
+import tempfile
 import textwrap
 from dataclasses import dataclass
 from pathlib import Path
@@ -16,65 +19,83 @@ from pathlib import Path
 log = logging.getLogger(__name__)
 
 # ── Dockerfile templates per language ───────────────────────────────────────
+# Security: use GPG-verified apt for Node.js, run as non-root user
+
+_NODE_INSTALL = """\
+RUN apt-get update && apt-get install -y git curl gnupg && rm -rf /var/lib/apt/lists/* \\
+    && curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key \\
+       | gpg --dearmor -o /usr/share/keyrings/nodesource.gpg \\
+    && echo "deb [signed-by=/usr/share/keyrings/nodesource.gpg] https://deb.nodesource.com/node_20.x nodistro main" \\
+       > /etc/apt/sources.list.d/nodesource.list \\
+    && apt-get update && apt-get install -y nodejs && rm -rf /var/lib/apt/lists/*"""
+
+_USER_SETUP = """\
+RUN useradd -m -s /bin/bash -u 1000 swarm-agent \\
+    && mkdir -p /workspace /run/secrets \\
+    && chown -R swarm-agent:swarm-agent /workspace
+USER swarm-agent"""
 
 DOCKERFILES: dict[str, str] = {
-    "python": textwrap.dedent("""\
+    "python": textwrap.dedent(f"""\
         FROM python:3.12-slim
-        RUN apt-get update && apt-get install -y git curl && rm -rf /var/lib/apt/lists/*
-        RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && apt-get install -y nodejs
+        {_NODE_INSTALL}
         RUN npm install -g @anthropic-ai/claude-code
         RUN pip install --no-cache-dir pytest ruff
         WORKDIR /workspace
         COPY entrypoint.sh /entrypoint.sh
         RUN chmod +x /entrypoint.sh
+        {_USER_SETUP}
         ENTRYPOINT ["/entrypoint.sh"]
     """),
-    "rust": textwrap.dedent("""\
+    "rust": textwrap.dedent(f"""\
         FROM rust:latest
-        RUN apt-get update && apt-get install -y git curl && rm -rf /var/lib/apt/lists/*
-        RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && apt-get install -y nodejs
+        {_NODE_INSTALL}
         RUN npm install -g @anthropic-ai/claude-code
         WORKDIR /workspace
         COPY entrypoint.sh /entrypoint.sh
         RUN chmod +x /entrypoint.sh
+        {_USER_SETUP}
         ENTRYPOINT ["/entrypoint.sh"]
     """),
-    "javascript": textwrap.dedent("""\
+    "javascript": textwrap.dedent(f"""\
         FROM node:20-slim
         RUN apt-get update && apt-get install -y git && rm -rf /var/lib/apt/lists/*
         RUN npm install -g @anthropic-ai/claude-code
         WORKDIR /workspace
         COPY entrypoint.sh /entrypoint.sh
         RUN chmod +x /entrypoint.sh
+        {_USER_SETUP}
         ENTRYPOINT ["/entrypoint.sh"]
     """),
-    "typescript": textwrap.dedent("""\
+    "typescript": textwrap.dedent(f"""\
         FROM node:20-slim
         RUN apt-get update && apt-get install -y git && rm -rf /var/lib/apt/lists/*
         RUN npm install -g @anthropic-ai/claude-code typescript
         WORKDIR /workspace
         COPY entrypoint.sh /entrypoint.sh
         RUN chmod +x /entrypoint.sh
+        {_USER_SETUP}
         ENTRYPOINT ["/entrypoint.sh"]
     """),
-    "go": textwrap.dedent("""\
+    "go": textwrap.dedent(f"""\
         FROM golang:1.22
-        RUN apt-get update && apt-get install -y git curl && rm -rf /var/lib/apt/lists/*
-        RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && apt-get install -y nodejs
+        {_NODE_INSTALL}
         RUN npm install -g @anthropic-ai/claude-code
         WORKDIR /workspace
         COPY entrypoint.sh /entrypoint.sh
         RUN chmod +x /entrypoint.sh
+        {_USER_SETUP}
         ENTRYPOINT ["/entrypoint.sh"]
     """),
-    "generic": textwrap.dedent("""\
+    "generic": textwrap.dedent(f"""\
         FROM ubuntu:24.04
-        RUN apt-get update && apt-get install -y git curl build-essential && rm -rf /var/lib/apt/lists/*
-        RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && apt-get install -y nodejs
+        RUN apt-get update && apt-get install -y build-essential && rm -rf /var/lib/apt/lists/*
+        {_NODE_INSTALL}
         RUN npm install -g @anthropic-ai/claude-code
         WORKDIR /workspace
         COPY entrypoint.sh /entrypoint.sh
         RUN chmod +x /entrypoint.sh
+        {_USER_SETUP}
         ENTRYPOINT ["/entrypoint.sh"]
     """),
 }
@@ -89,6 +110,11 @@ ENTRYPOINT_SCRIPT = textwrap.dedent("""\
     BRANCH="${BRANCH:-main}"
     MODEL="${MODEL:-claude-opus-4-6}"
     WORKSPACE="/workspace"
+
+    # Read API key from mounted secret file
+    if [ -f /run/secrets/api_key ]; then
+        export ANTHROPIC_API_KEY="$(cat /run/secrets/api_key)"
+    fi
 
     # Clone from upstream if workspace is empty
     if [ ! -d "$WORKSPACE/.git" ]; then
@@ -193,10 +219,19 @@ def build_image(build_dir: Path, image_name: str) -> str:
     return tag
 
 
+def _write_secret_file(api_key: str) -> Path:
+    """Write API key to a secure temp file for Docker secret mounting."""
+    secret_dir = Path(tempfile.mkdtemp(prefix="swarm-secret-"))
+    os.chmod(str(secret_dir), stat.S_IRWXU)  # 0o700 — owner only
+    key_file = secret_dir / "api_key"
+    key_file.write_text(api_key)
+    key_file.chmod(stat.S_IRUSR)  # 0o400 — owner read only
+    return key_file
+
+
 def spawn_agent(spec: ContainerSpec) -> str:
     """Start a container for an agent. Returns the container ID."""
     import docker as docker_sdk
-    import os
 
     client = docker_sdk.from_env()
     api_key = os.environ.get(spec.api_key_env, "")
@@ -213,26 +248,34 @@ def spawn_agent(spec: ContainerSpec) -> str:
         old = client.containers.get(container_name)
         old.remove(force=True)
         log.warning("Removed existing container %s", container_name)
-    except Exception:
+    except docker_sdk.errors.NotFound:
         pass
+    except docker_sdk.errors.APIError as e:
+        log.error("Failed to remove container %s: %s", container_name, e)
+
+    # Mount API key as a read-only secret file instead of env var
+    secret_file = _write_secret_file(api_key)
 
     container = client.containers.run(
         spec.image_name,
         name=container_name,
         detach=True,
+        user="1000:1000",
         environment={
             "AGENT_ID": spec.agent_id,
             "AGENT_ROLE": spec.role,
-            "ANTHROPIC_API_KEY": api_key,
             "MODEL": spec.model,
             "BRANCH": spec.branch,
             "UPSTREAM_PATH": "/upstream",
         },
         volumes={
             spec.upstream_path: {"bind": "/upstream", "mode": "rw"},
+            str(secret_file): {"bind": "/run/secrets/api_key", "mode": "ro"},
         },
         mem_limit=spec.memory_limit,
         nano_cpus=int(spec.cpu_limit * 1e9),
+        security_opt=["no-new-privileges:true"],
+        pids_limit=256,
     )
 
     container_id: str = container.id  # type: ignore[union-attr]
@@ -256,8 +299,11 @@ def stop_agent(agent_id: str, timeout: int = 10) -> bool:
         container.remove()
         log.info("Stopped and removed agent %s", agent_id)
         return True
-    except Exception:
+    except docker_sdk.errors.NotFound:
         log.warning("Container %s not found", container_name)
+        return False
+    except docker_sdk.errors.APIError as e:
+        log.error("Failed to stop container %s: %s", container_name, e)
         return False
 
 

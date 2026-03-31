@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 import time
 from pathlib import Path
@@ -27,27 +28,33 @@ def _slugify(task_name: str) -> str:
 
 
 def _lock_path(lock_dir: Path, task_name: str) -> Path:
-    return lock_dir / f"{_slugify(task_name)}.lock"
+    result = (lock_dir / f"{_slugify(task_name)}.lock").resolve()
+    if not result.is_relative_to(lock_dir.resolve()):
+        raise ValueError(f"Path traversal detected in task name: {task_name!r}")
+    return result
 
 
 def acquire_lock(lock_dir: Path, task_name: str, agent_id: str) -> bool:
-    """Write a lock file for a task. Returns True if the file was created (not already locked)."""
+    """Write a lock file for a task. Uses O_CREAT|O_EXCL for atomic creation (no TOCTOU race)."""
     lock_dir.mkdir(parents=True, exist_ok=True)
     lock_file = _lock_path(lock_dir, task_name)
 
-    if lock_file.exists():
-        log.debug("Lock already exists for task '%s'", task_name)
-        return False
-
-    lock_data = {
+    lock_data = json.dumps({
         "agent_id": agent_id,
         "task": task_name,
         "acquired_at": time.time(),
         "last_seen": time.time(),
-    }
-    lock_file.write_text(json.dumps(lock_data, indent=2))
-    log.info("Agent %s acquired lock on '%s'", agent_id, task_name)
-    return True
+    }, indent=2)
+
+    try:
+        fd = os.open(str(lock_file), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+        os.write(fd, lock_data.encode())
+        os.close(fd)
+        log.info("Agent %s acquired lock on '%s'", agent_id, task_name)
+        return True
+    except FileExistsError:
+        log.debug("Lock already exists for task '%s'", task_name)
+        return False
 
 
 def release_lock(lock_dir: Path, task_name: str, agent_id: str) -> bool:
