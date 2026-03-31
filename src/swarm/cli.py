@@ -88,6 +88,20 @@ max_sessions = 100
     config_path.write_text(config_content)
     console.print(f"\n[green]Wrote {config_path}[/green]")
 
+    # Add swarm runtime dirs to .gitignore
+    gitignore_path = project_dir / ".gitignore"
+    swarm_ignores = [".swarm/", "current_tasks/", "agent_logs/", "SWARM_AGENT_PROMPT*.md"]
+    existing = gitignore_path.read_text().splitlines() if gitignore_path.is_file() else []
+    new_entries = [e for e in swarm_ignores if e not in existing]
+    if new_entries:
+        with open(gitignore_path, "a") as f:
+            if existing and existing[-1].strip():
+                f.write("\n")
+            f.write("# Swarm AI runtime\n")
+            for entry in new_entries:
+                f.write(f"{entry}\n")
+        console.print(f"[green]Updated .gitignore[/green]")
+
 
 # ── swarm config show ───────────────────────────────────────────────────────
 
