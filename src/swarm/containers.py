@@ -277,9 +277,10 @@ def spawn_agent(spec: ContainerSpec) -> str:
     except docker_sdk.errors.APIError as e:
         log.error("Failed to remove container %s: %s", container_name, e)
 
-    # Build volumes map
+    # Build volumes map — Docker requires absolute paths
+    upstream_abs = str(Path(spec.upstream_path).resolve())
     volumes: dict[str, dict[str, str]] = {
-        spec.upstream_path: {"bind": "/upstream", "mode": "rw"},
+        upstream_abs: {"bind": "/upstream", "mode": "rw"},
     }
 
     if auth_mode == "oauth":

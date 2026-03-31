@@ -144,6 +144,8 @@ def run(
 
     project_dir = Path(cfg.project.path).resolve()
     upstream = Path(cfg.git.upstream)
+    if not upstream.is_absolute():
+        upstream = (project_dir / upstream).resolve()
 
     console.print(f"[bold]Starting swarm[/bold] — {cfg.agents.count} agents, model {cfg.agents.model}")
 
