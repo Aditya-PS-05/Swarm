@@ -51,17 +51,20 @@ def push_to_upstream(project_dir: Path, upstream: Path, branch: str = "main") ->
     log.info("Pushed %s to upstream", branch)
 
 
-def verify_upstream(upstream: Path) -> bool:
+def verify_upstream(upstream: Path, branch: str = "main") -> bool:
     """Verify the bare repo is valid and has commits."""
-    result = _run(
-        ["git", "rev-list", "--count", "HEAD"],
-        cwd=upstream,
-        check=False,
-    )
-    if result.returncode != 0:
-        return False
-    count = int(result.stdout.strip())
-    return count > 0
+    # Try the specific branch first, then fall back to HEAD
+    for ref in [branch, "HEAD"]:
+        result = _run(
+            ["git", "rev-list", "--count", ref],
+            cwd=upstream,
+            check=False,
+        )
+        if result.returncode == 0:
+            count = int(result.stdout.strip())
+            if count > 0:
+                return True
+    return False
 
 
 # ── Agent Clone ─────────────────────────────────────────────────────────────
