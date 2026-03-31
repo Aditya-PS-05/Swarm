@@ -9,7 +9,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import Enum
 
-from swarm.config import RolesConfig
+from swarm.config import ModelsConfig, RolesConfig
 
 
 class RoleType(str, Enum):
@@ -114,3 +114,20 @@ def assign_roles(agent_count: int, roles_config: RolesConfig) -> list[AgentRole]
 def get_role_description(role: RoleType) -> str:
     """Get the prompt description for a role."""
     return ROLE_DESCRIPTIONS[role]
+
+
+def resolve_model_for_role(
+    role: RoleType,
+    default_model: str,
+    models_config: ModelsConfig,
+) -> str:
+    """Get the model for a role, using per-role override if configured."""
+    role_model_map = {
+        RoleType.BUILDER: models_config.builders,
+        RoleType.TESTER: models_config.tester,
+        RoleType.REVIEWER: models_config.reviewer,
+        RoleType.DOCUMENTER: models_config.documenter,
+        RoleType.FIXER: models_config.fixer,
+    }
+    override = role_model_map.get(role, "")
+    return override if override else default_model

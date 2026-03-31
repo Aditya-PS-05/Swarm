@@ -28,11 +28,22 @@ class RolesConfig:
 
 
 @dataclass
+class ModelsConfig:
+    """Per-role model overrides. If set, overrides agents.model for that role."""
+    builders: str = ""
+    tester: str = ""
+    reviewer: str = ""
+    documenter: str = ""
+    fixer: str = ""
+
+
+@dataclass
 class AgentsConfig:
     count: int = 4
     model: str = "claude-opus-4-6"
     timeout_minutes: int = 30
     roles: RolesConfig = field(default_factory=RolesConfig)
+    models: ModelsConfig = field(default_factory=ModelsConfig)
 
 
 @dataclass
@@ -85,6 +96,7 @@ class SwarmConfig:
         if "agents" in data:
             a = data["agents"]
             roles_data = a.get("roles", {})
+            models_data = a.get("models", {})
             cfg.agents = AgentsConfig(
                 count=a.get("count", cfg.agents.count),
                 model=a.get("model", cfg.agents.model),
@@ -93,6 +105,13 @@ class SwarmConfig:
                     builders=roles_data.get("builders", cfg.agents.roles.builders),
                     tester=roles_data.get("tester", cfg.agents.roles.tester),
                     reviewer=roles_data.get("reviewer", cfg.agents.roles.reviewer),
+                ),
+                models=ModelsConfig(
+                    builders=models_data.get("builders", ""),
+                    tester=models_data.get("tester", ""),
+                    reviewer=models_data.get("reviewer", ""),
+                    documenter=models_data.get("documenter", ""),
+                    fixer=models_data.get("fixer", ""),
                 ),
             )
 

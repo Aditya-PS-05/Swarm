@@ -149,7 +149,7 @@ def run(
     from swarm.containers import ContainerSpec, build_image, spawn_agent, write_docker_assets
     from swarm.git_sync import create_bare_repo, push_to_upstream
     from swarm.prompt import generate_prompt
-    from swarm.roles import assign_roles
+    from swarm.roles import assign_roles, resolve_model_for_role
 
     cfg = load_config(Path.cwd(), config)
     if agents:
@@ -246,10 +246,15 @@ def run(
     else:
         image_tag = f"swarm-agent:{cfg.project.name}"
 
-    # 5. Spawn agents
+    # 5. Spawn agents (with per-role model selection)
     for role in roles:
+        agent_model = resolve_model_for_role(role.role, cfg.agents.model, cfg.agents.models)
+
         if dry_run:
-            console.print(f"  [dim]Would spawn agent {role.agent_id} ({role.role.value})[/dim]")
+            console.print(
+                f"  [dim]Would spawn agent {role.agent_id} "
+                f"({role.role.value}, {agent_model})[/dim]"
+            )
             continue
 
         spec = ContainerSpec(
@@ -258,10 +263,13 @@ def run(
             image_name=image_tag,
             upstream_path=str(upstream),
             branch=cfg.git.branch,
-            model=cfg.agents.model,
+            model=agent_model,
         )
         container_id = spawn_agent(spec)
-        console.print(f"  [green]Spawned agent {role.agent_id}[/green] ({container_id[:12]})")
+        console.print(
+            f"  [green]Spawned agent {role.agent_id}[/green] "
+            f"({role.role.value}, {agent_model}) ({container_id[:12]})"
+        )
 
     if dry_run:
         console.print("\n[yellow]Dry run complete — no agents spawned[/yellow]")
