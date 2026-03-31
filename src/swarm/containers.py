@@ -222,18 +222,22 @@ def write_docker_assets(build_dir: Path, language: str) -> tuple[Path, Path]:
 
 def build_image(build_dir: Path, image_name: str) -> str:
     """Build the swarm agent Docker image. Returns the image tag."""
-    import docker as docker_sdk
+    import subprocess
 
-    client = docker_sdk.from_env()
     tag = f"swarm-agent:{image_name}"
 
     log.info("Building Docker image %s from %s", tag, build_dir)
-    client.images.build(
-        path=str(build_dir),
-        dockerfile="Dockerfile.swarm",
-        tag=tag,
-        rm=True,
+    result = subprocess.run(
+        ["docker", "build", "-f", "Dockerfile.swarm", "-t", tag, "."],
+        cwd=build_dir,
+        capture_output=True,
+        text=True,
+        timeout=600,
     )
+    if result.returncode != 0:
+        log.error("Docker build failed:\n%s", result.stderr[-2000:])
+        raise RuntimeError(f"Docker build failed: {result.stderr[-500:]}")
+
     log.info("Built image %s", tag)
     return tag
 
