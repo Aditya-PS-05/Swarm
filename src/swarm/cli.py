@@ -266,9 +266,95 @@ def run(
     if dry_run:
         console.print("\n[yellow]Dry run complete — no agents spawned[/yellow]")
     else:
+        # Save state for resume
+        from swarm.state import create_state_from_run
+
+        agent_info = [
+            (role.agent_id, role.role.value, cfg.agents.model, "")
+            for role in roles
+        ]
+        swarm_state = create_state_from_run(
+            project_name=cfg.project.name,
+            project_dir=project_dir,
+            upstream_path=str(upstream),
+            branch=cfg.git.branch,
+            image_tag=image_tag,
+            agents=agent_info,
+        )
+        swarm_state.save(project_dir)
+
         console.print(f"\n[green bold]Swarm running![/green bold] {cfg.agents.count} agents active")
         console.print("  Use [cyan]swarm status[/cyan] to monitor progress")
+        console.print("  Use [cyan]swarm dashboard[/cyan] for live TUI")
         console.print("  Use [cyan]swarm stop[/cyan] to shut down")
+        console.print("  Use [cyan]swarm resume[/cyan] to restart after stop")
+
+
+# ── swarm resume ────────────────────────────────────────────────────────────
+
+
+@app.command()
+def resume(
+    _config: Optional[Path] = typer.Option(None, "--config", "-c", help="Config file path"),
+) -> None:
+    """Resume agents from where they left off."""
+    from swarm.containers import ContainerSpec, build_image, spawn_agent, write_docker_assets
+    from swarm.state import SwarmState, can_resume
+
+    project_dir = Path.cwd()
+
+    if not can_resume(project_dir):
+        console.print("[red]Nothing to resume.[/red] Run [cyan]swarm run[/cyan] first.")
+        raise typer.Exit(1)
+
+    state = SwarmState.load(project_dir)
+    if state is None:
+        console.print("[red]Corrupt state file.[/red] Run [cyan]swarm run[/cyan] instead.")
+        raise typer.Exit(1)
+
+    console.print(f"[bold]Resuming swarm[/bold] — {len(state.agents)} agents, {state.project_name}")
+    upstream = Path(state.upstream_path)
+
+    # Check upstream exists
+    if not upstream.is_dir():
+        console.print(f"[red]Upstream repo not found:[/red] {upstream}")
+        console.print("Run [cyan]swarm run[/cyan] to start fresh.")
+        raise typer.Exit(1)
+
+    # Rebuild image if needed
+    image_tag = state.image_tag
+    import subprocess as sp
+
+    check = sp.run(["docker", "inspect", image_tag], capture_output=True)
+    if check.returncode != 0:
+        console.print(f"  Image {image_tag} not found, rebuilding...")
+        from swarm.analyzer import analyze_project
+
+        summary = analyze_project(project_dir)
+        build_dir = project_dir / ".swarm" / "build"
+        write_docker_assets(build_dir, summary.language)
+        image_tag = build_image(build_dir, state.project_name)
+
+    # Respawn agents with same roles
+    for agent in state.agents:
+        spec = ContainerSpec(
+            agent_id=agent.agent_id,
+            role=agent.role,
+            image_name=image_tag,
+            upstream_path=state.upstream_path,
+            branch=state.branch,
+            model=agent.model,
+        )
+        container_id = spawn_agent(spec)
+        console.print(
+            f"  [green]Resumed agent {agent.agent_id}[/green] "
+            f"({agent.role}) ({container_id[:12]})"
+        )
+
+    state.mark_running()
+    state.save(project_dir)
+
+    console.print(f"\n[green bold]Swarm resumed![/green bold] {len(state.agents)} agents active")
 
 
 # ── swarm status ────────────────────────────────────────────────────────────
@@ -335,6 +421,7 @@ def stop(
 ) -> None:
     """Stop all agents (or a specific one)."""
     from swarm.containers import stop_agent, stop_all
+    from swarm.state import SwarmState
 
     if agent_id:
         aid = agent_id.replace("agent-", "")
@@ -345,6 +432,13 @@ def stop(
     else:
         count = stop_all()
         console.print(f"[green]Stopped {count} agents[/green]")
+
+        # Update state
+        state = SwarmState.load(Path.cwd())
+        if state:
+            state.mark_stopped()
+            state.save(Path.cwd())
+            console.print("  State saved — use [cyan]swarm resume[/cyan] to restart")
 
 
 # ── swarm logs ──────────────────────────────────────────────────────────────
